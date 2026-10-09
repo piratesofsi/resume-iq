@@ -1,0 +1,62 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: resumeiq-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  ml-service:
+    image: python:3.12-slim
+    container_name: resumeiq-ml
+    working_dir: /app
+    volumes:
+      - ./ml-service:/app
+    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload"
+    ports:
+      - "8001:8001"
+    depends_on:
+      - mongo
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 15s
+
+  server:
+    image: node:22-alpine
+    container_name: resumeiq-server
+    working_dir: /app
+    volumes:
+      - ./server:/app
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env.example
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/resumeiq
+      ML_SERVICE_URL: http://ml-service:8001
+    depends_on:
+      mongo:
+        condition: service_started
+      ml-service:
+        condition: service_healthy
+
+  client:
+    image: node:22-alpine
+    container_name: resumeiq-client
+    working_dir: /app
+    volumes:
+      - ./client:/app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - server
+
+volumes:
+  mongo_data:
